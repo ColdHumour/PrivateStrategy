@@ -14,7 +14,6 @@ ls_pct = 0.9
 def initialize(account):
     add_history('hist', window)
     account.hold_days = {}
-    account.hold_cost = {}
     account.free_cash = 0.
     account.n = 0
     account.max_v = 0.
@@ -56,7 +55,6 @@ def smart_sell(account, buylist, prxmap):
         if stock in buylist:
             if account.stkpos.get(stock, 0) > 0:  # 刷新状态
                 account.hold_days[stock] = 1
-                account.hold_cost[stock] = prxmap[stock]
                 
         if account.hold_days[stock] == max_t:
             if account.stkpos.get(stock, 0) > 0:  # 到期卖出
@@ -64,7 +62,6 @@ def smart_sell(account, buylist, prxmap):
                 account.free_cash += prxmap.get(stock, 0) * account.stkpos.get(stock, 0)
             else:                                 # 更新状态
                 del account.hold_days[stock]
-                del account.hold_cost[stock]
         else:                                     # 继续持有
             account.hold_days[stock] += 1
             account.n += 1
@@ -97,4 +94,3 @@ def smart_buy(account, buylist, prxmap):
         if not i: continue
         order_to(stock, i)
         account.hold_days[stock] = 1
-        account.hold_cost[stock] = prxmap[stock]
