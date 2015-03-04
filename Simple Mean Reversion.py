@@ -26,7 +26,6 @@ max_n = 10     # 持仓数量
 def initialize(account):
     account.hold_days = {}
     account.free_cash = 0.
-    account.max_v = 0.
     account.to_sell = set([])
     
 def handle_data(account):
@@ -80,7 +79,7 @@ def rebalance(account, buylist, prxmap):
     
     buylist = buylist[:n]
     account.free_cash *= 0.9
-    if account.free_cash < min(map(prxmap.get, buylist)) * 100: return
+    if not buylist or account.free_cash < min(map(prxmap.get, buylist)) * 100: return
     
     exp_amount, c = {}, account.free_cash
     for stock in buylist:     
