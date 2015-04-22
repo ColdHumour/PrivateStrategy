@@ -257,7 +257,7 @@ sigtype = {
 }
 
 tradeDates = trading_days
-effectPrx  = opn_all
+effectPrx  = {sec:opn_all[i] for sec,i in idxmap_univ.items()}
 refPrxMap  = prx
 refSecPos  = position
 dt2ix = dict(zip(tradeDates, range(len(tradeDates))))
