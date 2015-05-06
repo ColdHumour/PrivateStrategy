@@ -10,7 +10,7 @@ import quartz
 from quartz.api import *
 
 start = '2010-01-01'
-end   = '2015-04-01'
+end   = '2015-05-01'
 benchmark = 'HS300'
 universe = set_universe('HS300')
 capital_base = 20000.
@@ -23,7 +23,6 @@ idxmap_all, data_all = quartz.sim_condition.data_generator.get_daily_data(sim_pa
 
 # Backtest Version
 
-longest_history = 80
 refresh_rate = 1
 
 max_t = {1: 10, 2: 5, 3: 5}   # 持仓时间
@@ -37,8 +36,8 @@ class MyPosition:
         self.sigtype = {}
     
     def rebalance(self, account, buylist):
-        tradeDates = account.get_symbol_history('tradeDate', longest_history)
-        effectPrx  = account.get_attribute_history('openPrice', longest_history)
+        tradeDates = account.get_symbol_history('tradeDate', 80)
+        effectPrx  = account.get_attribute_history('openPrice', 80)
         refPrxMap  = account.referencePrice
         refSecPos  = account.valid_secpos
         dt2ix = dict(zip(tradeDates, range(len(tradeDates))))
@@ -102,7 +101,7 @@ def handle_data(account):
     prx = account.get_attribute_history('closePrice', 60)
     uret, dret = {}, {}
     for stock, p in prx.items():
-        if stock in account.universe and np.isnan(p).sum() <= longest_history * 0.33 and \
+        if stock in account.universe and np.isnan(p).sum() <= 80 * 0.33 and \
            not np.isnan(p[-1]) and not np.isnan(p[0]) and not np.isnan(p[-20]):
             uret[stock] = p[-1] / p[-20]
             dret[stock] = p[-1] / p[0]
@@ -123,12 +122,14 @@ def handle_data(account):
         signal  = 2
     
     tv = account.get_attribute_history('turnoverVol', 80)
+    opn = account.get_attribute_history('openPrice', 1)
     volmap = {}
     for stock,ts in tv.items():
         if ts[-1]:
             ts = filter(None, ts)
             v = 1. * sum(ts[:-1]) / (len(ts) - 1)
-            if len(ts) >= 60 and ts[-1] >= v_thres * v and 0 < account.referenceReturn[stock] < r_thres:
+            r = prx[stock][-1] / opn[stock][-1] - 1.
+            if len(ts) >= 60 and ts[-1] >= v_thres * v and 0 < r < r_thres:
                 volmap[stock] = 1.*ts[-1]/v
     if not buylist:
         buylist = nlargest(max_n, volmap, key=volmap.get)
@@ -138,9 +139,7 @@ def handle_data(account):
     account.myPos.rebalance(account, buylist)
         
 strategy = quartz.sim_condition.strategy.TradingStrategy(initialize, handle_data)        
-bt, acct = quartz.quick_backtest(
-    sim_params, strategy, idxmap_all, data_all,
-    refresh_rate = refresh_rate, longest_history = longest_history)
+bt, acct = quartz.quick_backtest(sim_params, strategy, idxmap_all, data_all, refresh_rate = refresh_rate)
 perf = quartz.perf_parse(bt, acct)
 
 out_keys = ['annualized_return', 'volatility', 'information_ratio', 
@@ -212,7 +211,8 @@ for stock,i in idxmap_univ.items():
     
     ts = filter(None, ts)
     v = 1. * sum(ts[:-1]) / (len(ts) - 1)
-    if len(ts) >= 60 and ts[-1] >= v_thres * v and 1 < p[-1]/p[-2] < 1+r_thres:
+    r = p[-1] / opn_all[i][-1]
+    if len(ts) >= 60 and ts[-1] >= v_thres * v and 1 < r < 1+r_thres:
         volmap[stock] = 1.*ts[-1]/v
         prx[stock] = p[-1]
 
@@ -308,9 +308,9 @@ else:
             buydate[stock] = trading_days[-1]
             sigtype[stock] = signal
         else:
-            amount.remove(stock)
-    for stock in to_sell:
-        amount[stock] = 0
+            del amount[stock]
+for stock in to_sell:
+    amount[stock] = 0
 
 print "OPERATIONS:\n"
 for stock,a in amount.items():
