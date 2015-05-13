@@ -210,6 +210,9 @@ for stock,i in idxmap_univ.items():
         continue
     
     ts = filter(None, ts)
+    if len(ts) < 64: 
+        continue
+    
     v = 1. * sum(ts[:-1]) / (len(ts) - 1)
     r = p[-1] / opn_all[i][-1]
     if len(ts) >= 60 and ts[-1] >= v_thres * v and 1 < r < 1+r_thres:
