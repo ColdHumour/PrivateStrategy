@@ -39,7 +39,7 @@ def hurst(nlist):
         temp = [nlist[i*n:(i+1)*n] for i in range(m)]
         out = map(rs, temp)
         out = [s for s in out if not np.isnan(s)]
-        out = math.log(sum(out) / len(out))
+        out = (math.log(sum(out) / len(out))) if out else np.nan
         y.append(out)
     return LinearRegression(y, x)
 
@@ -81,7 +81,7 @@ def handle_data(account):
         x = hseries(ret)
         d = len(x)
     
-        if sum(x[:3])/3 > 0.55 and x[-1] < 0.52:
+        if sum(x[:3])/3 > 0.57 and x[-1] < 0.50:
             m = sum(cls[stock][-120:]) / 120
             if cls[stock][-1] < m:
                 buylist.append(stock)
