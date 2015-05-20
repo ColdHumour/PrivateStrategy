@@ -94,6 +94,7 @@ def handle_data(account):
         p -= 1
     
     p += len(buylist)
+    if not p: return
     v = account.referencePortfolioValue / p
     for stock in account.valid_secpos:
         if stock not in sellist:
