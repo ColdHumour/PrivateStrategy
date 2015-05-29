@@ -38,7 +38,6 @@ class MyPosition:
         self.wareHouse = {}
     
     def rebalance(self, account, buylist):
-        effectPrx = account.get_attribute_history('openPrice', 1)
         refPrxMap = account.referencePrice
         refSecPos = account.valid_secpos
         
@@ -222,7 +221,6 @@ class MyPosition:
         self.wareHouse = {}
     
     def rebalance(self, account, buylist):
-        effectPrx = account.get_attribute_history('openPrice', 1)
         refPrxMap = account.referencePrice
         refSecPos = account.valid_secpos
         
@@ -317,42 +315,46 @@ def initialize(account):
     account.myPos = MyPosition()
     
 def handle_data(account):
+    # 1. 计算过去三个月和一个月的累计收益
     prx = account.get_attribute_history('closePrice', 60)
     uret, dret = {}, {}
-    for stock, p in prx.items():
-        if stock in account.universe and np.isnan(p).sum() <= 20 and \
+    for sec, p in prx.items():
+        if sec in account.universe and np.isnan(p).sum() <= 20 and \
            not np.isnan(p[-1]) and not np.isnan(p[0]) and not np.isnan(p[-20]):
-            uret[stock] = p[-1] / p[-20]
-            dret[stock] = p[-1] / p[0]
+            uret[sec] = p[-1] / p[-20]
+            dret[sec] = p[-1] / p[0]
     
     buylist = []
     
+    # 2. 判断是否进入反转期，并获得反转买单
     down = filter(lambda x: x < 1, dret.values())
     dpct = 1.*len(down)/len(dret)
     if dpct > 0.75:
         buylist = nsmallest(max_n, dret, key=dret.get)
         signal  = 1
     
+    # 3. 判断是否进入惯性期，并获得惯性买单
     up = filter(lambda x: x > 1, uret.values())
-    upct = 1.*len(up)/len(uret)
-    rbar = sum(up)/len(up)
+    upct, rbar = 1.*len(up)/len(uret), sum(up)/len(up)
     if 0.5 < upct < 0.75 and rbar < 1.1 and not buylist:
         buylist = nlargest(max_n, uret, key=uret.get)
         signal  = 2
     
+    # 4. 判断是否存在交易量择时机会，并获得交易量择时买单
     tv = account.get_attribute_history('turnoverVol', 80)
     volmap = {}
-    for stock,ts in tv.items():
+    for sec,ts in tv.items():
         if ts[-1]:
             ts = filter(None, ts)
             v = 1. * sum(ts[:-1]) / (len(ts) - 1)
-            if len(ts) >= 60 and ts[-1] >= v_thres * v and 0 < account.referenceReturn[stock] < r_thres:
-                volmap[stock] = 1.*ts[-1]/v
+            r = account.referenceReturn[sec]
+            if len(ts) >= 60 and ts[-1] >= v_thres * v and 0 < r < r_thres:
+                volmap[sec] = 1.*ts[-1]/v
     if not buylist:
         buylist = nlargest(max_n, volmap, key=volmap.get)
         signal  = 3
     
-    buylist = [(stock, max_t[signal]) for stock in buylist]
+    buylist = [(sec, max_t[signal]) for sec in buylist]
     account.myPos.rebalance(account, buylist)
         
 strategy = quartz.sim_condition.strategy.TradingStrategy(initialize, handle_data)        
@@ -428,10 +430,10 @@ r_thres = 0.05                # 收益率上限
 dret, uret, volmap, prx = {}, {}, {}, {}
 for stock,i in idxmap_univ.items():
     p = prx_all[i]
-    if np.isnan(p).sum() <= 20 and not np.isnan(p[-1]) and \
+    if np.isnan(p).sum() <= 26 and not np.isnan(p[-1]) and \
        not np.isnan(p[0]) and not np.isnan(p[-20]):
-        dret[stock] = p[-1] / p[0]
         uret[stock] = p[-1] / p[-20]
+        dret[stock] = p[-1] / p[0]
         prx[stock] = p[-1]
     
     ts = vol_all[i]
@@ -439,12 +441,12 @@ for stock,i in idxmap_univ.items():
         continue
     
     ts = filter(None, ts)
-    if len(ts) < 64: 
+    if len(ts) < 60: 
         continue
     
     v = 1. * sum(ts[:-1]) / (len(ts) - 1)
-    r = p[-1] / opn_all[i][-1]
-    if len(ts) >= 60 and ts[-1] >= v_thres * v and 1 < r < 1+r_thres:
+    r = p[-1] / p[-2] - 1.
+    if len(ts) >= 60 and ts[-1] >= v_thres * v and 0 < r < r_thres:
         volmap[stock] = 1.*ts[-1]/v
         prx[stock] = p[-1]
 
@@ -466,11 +468,11 @@ if not buylist:
     buylist = nlargest(max_n, volmap, key=volmap.get)
     signal = 3
 
-buylist = [(stock, signal) for stock in buylist]    
+buylist = [(stock, max_t[signal]) for stock in buylist]    
     
 print '\nbuylist:'
-for stock, signal in buylist:
-    print stock, signal
+for stock, n in buylist:
+    print stock, n
 
 
 
@@ -480,69 +482,97 @@ position = {
 
 }
 
-buydate = {
+goodShelf = {
 
 }
 
-sigtype = {
-
+wareHouse = {
+    
 }
-
-tradeDates = trading_days
-effectPrx  = {sec:opn_all[i] for sec,i in idxmap_univ.items()}
-refPrxMap  = prx
-refSecPos  = position
-dt2ix = dict(zip(tradeDates, range(len(tradeDates))))
-
-# 更新已持有
-for stock, signal in buylist[:]:
-    if stock in refSecPos:
-        buydate[stock] = trading_days[-1]
-        sigtype[stock] = signal
-        buylist.remove((stock, signal))
-
-# 卖出
-free_cash = portfolio_value = cash
-to_sell = []
-for stock, dt in buydate.items():
-    portfolio_value += refPrxMap[stock] * refSecPos[stock]
     
-    if dt < tradeDates[0]:
-        dt = tradeDates[0]
-    elif dt > tradeDates[-1]:
-        continue
-    
-    if len(filter(None, effectPrx[stock][dt2ix[dt]:])) >= max_t[sigtype[stock]]:
-        free_cash += refPrxMap[stock] * refSecPos[stock]
-        to_sell.append(stock)
+# 1. 更新倒计时
+for sec in goodShelf:
+    if sec in prx:
+        goodShelf[sec] -= 1
+for sec in wareHouse.keys():
+    if sec in prx:
+        wareHouse[sec] -= 1
+    if wareHouse[sec] <= 0:
+        del wareHouse[sec]
 
-# 买入
-if (not buylist) or (len(refSecPos) > max_n * 0.7) or (free_cash < portfolio_value * 0.3):
-    amount = {}
+# 2. 根据position更新goodShelf
+for sec, n in goodShelf.items():
+    if sec not in position:
+        if n > 0:
+            wareHouse[sec] = n
+        del goodShelf[sec]
+
+# 3. 根据buylist更新goodShelf和wareHouse
+for sec, n in buylist[:]:
+    if sec in goodShelf:
+        goodShelf[sec] = n
+        buylist.remove((sec, n))
+    elif sec in wareHouse:
+        del wareHouse[sec]
+
+# 4. 根据goodShelf卖出
+b = len(goodShelf)
+for sec, n in goodShelf.items():
+    if n <= 0:
+        b -= 1
+        del position[sec]
+
+# 5. 确定buylist
+b = max_n - b
+flag = 1
+supplement = [sec for sec in wareHouse if sec in prx]
+# 1) 没有调仓空间，buylist全部添加进wareHouse
+if b == 0:
+    for sec, n in buylist:
+        wareHouse[sec] = n
+    flag = 0
+# 2) 没有可买股票
+elif len(buylist) + len(supplement) == 0:
+    flag = 0
+# 3) buylist足够，多的添加进wareHouse
+elif len(buylist) >= b:
+    for sec, n in buylist[b:]:
+        wareHouse[sec] = n
+    buylist = buylist[:b]
+# 4) buylist不够，但是加上仓库的足够
+elif len(buylist) + len(supplement) >= b:
+    supplement = nlargest(b-len(buylist), supplement, key=wareHouse.get)
+    for sec in supplement:
+        buylist.append((sec, wareHouse[sec]))
+        del wareHouse[sec]
+# 4) buylist不够，加上仓库的也不够
 else:
-    n = min(len(buylist), max_n - len(refSecPos))
-    buylist = buylist[:n]
+    for sec in supplement:
+        if sec in account.universe:
+            buylist.append((sec, wareHouse[sec]))
+            del wareHouse[sec]
 
-    symbols, amount, c = zip(*buylist)[0], {}, free_cash
-    for stock in symbols:     
-        a = int(c / len(symbols) / refPrxMap[stock]) / 100 * 100
-        amount[stock] = a
-        free_cash -= a * refPrxMap[stock]
+# 6. 买入
+symbols, amount = list(zip(*buylist)[0]), {}
+v = cash
+for sec, n in position.items():
+    v += n * prx[sec]
 
-    while free_cash > min(map(refPrxMap.get, symbols)) * 100:
-        for stock in sorted(symbols, key=amount.get):
-            if free_cash > 100 * refPrxMap[stock]:
-                amount[stock] += 100
-                free_cash -= 100 * refPrxMap[stock]
+if flag:
+    # 1) 补完调仓列表
+    for sec, n in goodShelf.items():
+        if n > 0:
+            symbols.append(sec)
 
-    for stock, signal in buylist:
-        if amount[stock]:
-            buydate[stock] = trading_days[-1]
-            sigtype[stock] = signal
+    # 2) 计算调仓数额
+    for sec in symbols:
+        amount[sec] = int(v / len(symbols) / prx[sec]) / 100 * 100
+
+    for sec, n in buylist:
+        if amount[sec]:
+            goodShelf[sec] = n
         else:
-            del amount[stock]
-for stock in to_sell:
-    amount[stock] = 0
+            wareHouse[sec] = n
 
 print "OPERATIONS:\n"
 for stock,a in amount.items():
@@ -555,12 +585,12 @@ for stock, a in position.items():
     print '    \'%s\': %d,' % (stock, a)
 print '}'
 
-print "\nbuydate = {"
-for stock, a in buydate.items():
-    print '    \'%s\': %s,' % (stock, repr(a).split('.')[1])
+print "\ngoodShelf = {"
+for stock, a in goodShelf.items():
+    print '    \'%s\': %s,' % (stock, a)
 print '}'
     
-print "\nsigtype = {"
-for stock, a in sigtype.items():
+print "\nwareHouse = {"
+for stock, a in wareHouse.items():
     print '    \'%s\': %d,' % (stock, a)
 print '}'
