@@ -476,18 +476,15 @@ for stock, n in buylist:
 
 
 
-cash = 20000.
+cash = 29200.
 
 position = {
-
 }
 
 goodShelf = {
-
 }
 
-wareHouse = {
-    
+wareHouse = {  
 }
     
 # 1. 更新倒计时
@@ -516,11 +513,13 @@ for sec, n in buylist[:]:
         del wareHouse[sec]
 
 # 4. 根据goodShelf卖出
+amount, v = {}, cash
 b = len(goodShelf)
 for sec, n in goodShelf.items():
     if n <= 0:
         b -= 1
-        del position[sec]
+        amount[sec] = 0
+        v += position[sec] * prx[sec]
 
 # 5. 确定buylist
 b = max_n - b
@@ -553,12 +552,11 @@ else:
             del wareHouse[sec]
 
 # 6. 买入
-symbols, amount = list(zip(*buylist)[0]), {}
-v = cash
+symbols = list(zip(*buylist)[0]) if buylist else []
 for sec, n in position.items():
     v += n * prx[sec]
 
-if flag:
+if flag or amount:
     # 1) 补完调仓列表
     for sec, n in goodShelf.items():
         if n > 0:
