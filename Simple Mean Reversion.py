@@ -18,8 +18,6 @@ capital_base = 20000.
 sim_params = quartz.sim_condition.env.SimulationParameters(start, end, benchmark, universe, capital_base)
 idxmap_all, data_all = quartz.sim_condition.data_generator.get_daily_data(sim_params)
 
-longest_history = 60
-
 max_t = 10     # 持仓时间
 max_n = 10     # 持仓数量
 
@@ -29,10 +27,11 @@ def initialize(account):
     account.to_sell = set([])
     
 def handle_data(account):
-    prxmap = account.get_attribute_history('closePrice', longest_history)
+    prxref = account.get_attribute_history('openPrice', 60)
+    prxmap = account.get_attribute_history('closePrice', 60)
     retmap = {}
     for stock, p in prxmap.items():
-        if stock in account.universe and np.isnan(p).sum() <= longest_history * 0.33 and len(p) >= longest_history * 0.67:
+        if stock in account.universe and len(filter(None, prxref[stock])) >= 40:
             retmap[stock] = p[-1] / p[0]
         prxmap[stock] = p[-1]
         
@@ -97,13 +96,10 @@ def rebalance(account, buylist, prxmap):
         order(stock, a)
         
 strategy = quartz.sim_condition.strategy.TradingStrategy(initialize, handle_data)        
-bt, idxmap, data = quartz.quick_backtest(
-    sim_params, strategy, idxmap_all, data_all,
-    longest_history = longest_history)
-perf = quartz.perf_parse(bt, idxmap, data)
+bt, acct = quartz.quick_backtest(sim_params, strategy, idxmap_all, data_all)
+perf = quartz.perf_parse(bt, acct)
 
-out_keys = ['annualized_return', 'volatility', 'information_ratio', 
-            'sharpe', 'max_drawdown', 'alpha', 'beta']
+out_keys = ['annualized_return', 'volatility', 'information_ratio', 'sharpe', 'max_drawdown', 'alpha', 'beta']
 print '\nSimple Mean Reversion Performance:'
 for k in out_keys:
     print '    %s%.2f' % (k + ' '*(20-len(k)), perf[k])
