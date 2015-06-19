@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from heapq import nsmallest
+from heapq import nsmallest, nlargest
 from copy import deepcopy
 
 import seaborn
@@ -14,6 +14,7 @@ end   = '2015-03-01'
 benchmark = 'HS300'
 universe = set_universe('HS300')
 capital_base = 20000.
+refresh_rate = 10
 
 sim_params = quartz.sim_condition.env.SimulationParameters(start, end, benchmark, universe, capital_base)
 idxmap_all, data_all = quartz.sim_condition.data_generator.get_daily_data(sim_params)
@@ -35,7 +36,8 @@ def handle_data(account):
             retmap[stock] = p[-1] / p[0]
         prxmap[stock] = p[-1]
         
-    buylist = nsmallest(max_n, retmap.keys(), key=retmap.get)        
+    # buylist = nsmallest(max_n, retmap.keys(), key=retmap.get)
+    buylist = nlargest(max_n, retmap.keys(), key=retmap.get) 
     rebalance(account, buylist, prxmap)
 
 def rebalance(account, buylist, prxmap):
@@ -96,7 +98,7 @@ def rebalance(account, buylist, prxmap):
         order(stock, a)
         
 strategy = quartz.sim_condition.strategy.TradingStrategy(initialize, handle_data)        
-bt, acct = quartz.quick_backtest(sim_params, strategy, idxmap_all, data_all)
+bt, acct = quartz.quick_backtest(sim_params, strategy, idxmap_all, data_all, refresh_rate = refresh_rate)
 perf = quartz.perf_parse(bt, acct)
 
 out_keys = ['annualized_return', 'volatility', 'information_ratio', 'sharpe', 'max_drawdown', 'alpha', 'beta']
@@ -109,3 +111,86 @@ fig = pylab.figure(figsize=(12, 6))
 perf['cumulative_returns'].plot()
 perf['benchmark_cumulative_returns'].plot()
 pylab.legend(['Mean Reversion', 'HS300'], loc=1)
+
+
+
+
+
+
+
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from heapq import nsmallest, nlargest
+
+import quartz
+from quartz.api import *
+from CAL.PyCAL import *
+
+today = Date.todaysDate()
+cal = Calendar('China.SSE')
+start = cal.advanceDate(today, '-60B', BizDayConvention.Following)
+end   = cal.advanceDate(today, '-1B',  BizDayConvention.Following)
+
+start = datetime(start.year(), start.month(), start.dayOfMonth())
+end   = datetime(end.year(),   end.month(),   end.dayOfMonth())
+
+print 'start:\t', start
+print 'end:  \t', end
+
+trading_days = quartz.utils.tradingcalendar.get_trading_days(start, end)
+
+assert len(trading_days) == 60
+
+universe = set_universe('HS300')
+idxmap_univ, idxmap_cols, data_all = quartz.data.load_stocks_data(universe, trading_days)
+prx_ref = [np.array(d[idxmap_cols['openPrice']]) for d in data_all]
+prx_all = [np.array(d[idxmap_cols['closePrice']]) for d in data_all]
+
+prxmap, retmap = {}, {}
+for stock in idxmap_univ:
+    prx = prx_all[idxmap_univ[stock]]
+    if len(filter(None, prx_ref[idxmap_univ[stock]])) >= 40:
+        prxmap[stock] = prx[-1]
+        retmap[stock] = prx[-1] / prx[0]
+buylist = nlargest(10, retmap.keys(), key=retmap.get)
+
+print '\nbuylist:'
+for stock in buylist:
+    print stock
+
+
+
+cash = 20000.
+position = {
+    
+}
+
+for stock in position:
+    cash += prxmap[stock] * position[stock]
+
+amount = dict.fromkeys(buylist, 0)
+
+cash_now = cash
+for stock in buylist:
+    a = int(cash_now / len(buylist) / prxmap[stock])/100*100
+    amount[stock] += a
+    cash -= a * prxmap[stock]
+
+while cash >= min(map(prxmap.get, buylist)) * 100:
+    for stock in sorted(buylist, key=amount.get):
+        if cash < 100 * prxmap[stock]: continue
+        amount[stock] += 100
+        cash -= 100 * prxmap[stock]            
+            
+for stock in buylist:
+    print '\'%s\': %d,' % (stock, amount[stock])
+
+
+
+diff = {}
+for stock in set(position.keys()).union(buylist):
+    diff[stock] = amount.get(stock, 0) - position.get(stock, 0)
+    
+for stock in sorted(diff.keys(), key = lambda x: diff[x]):
+    print stock, diff[stock]

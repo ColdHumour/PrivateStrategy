@@ -132,10 +132,11 @@ def initialize(account):
     
 def handle_data(account):
     # 1. 计算过去三个月和一个月的累计收益
+    opn = account.get_attribute_history('openPrice', 60)
     prx = account.get_attribute_history('closePrice', 60)
     uret, dret = {}, {}
     for sec, p in prx.items():
-        if sec in account.universe and np.isnan(p).sum() <= 20 and \
+        if sec in account.universe and len(filter(None, opn[sec])) >= 40 and \
            not np.isnan(p[-1]) and not np.isnan(p[0]) and not np.isnan(p[-20]):
             uret[sec] = p[-1] / p[-20]
             dret[sec] = p[-1] / p[0]
@@ -192,13 +193,13 @@ pylab.legend(['Hybrid Regime Switch', 'HS300'], loc='upper left')
 
 """
 Hybrid Regime Switch Performance:
-    annualized_return   1.43
-    volatility          0.34
-    information_ratio   1.35
-    sharpe              4.07
-    max_drawdown        0.24
-    alpha               0.38
-    beta                0.92
+    annualized_return   0.40
+    volatility          0.25
+    information_ratio   1.26
+    sharpe              1.48
+    max_drawdown        0.30
+    alpha               0.28
+    beta                0.70
 """
 
 
@@ -316,10 +317,11 @@ def initialize(account):
     
 def handle_data(account):
     # 1. 计算过去三个月和一个月的累计收益
+    opn = account.get_attribute_history('openPrice', 60)
     prx = account.get_attribute_history('closePrice', 60)
     uret, dret = {}, {}
     for sec, p in prx.items():
-        if sec in account.universe and np.isnan(p).sum() <= 20 and \
+        if sec in account.universe and len(filter(None, opn[sec])) >= 40 and \
            not np.isnan(p[-1]) and not np.isnan(p[0]) and not np.isnan(p[-20]):
             uret[sec] = p[-1] / p[-20]
             dret[sec] = p[-1] / p[0]
@@ -376,13 +378,13 @@ pylab.legend(['Hybrid Regime Switch', 'HS300'], loc='upper left')
 
 """
 Hybrid Regime Switch Performance:
-    annualized_return   1.15
-    volatility          0.27
-    information_ratio   1.44
-    sharpe              4.13
-    max_drawdown        0.25
-    alpha               0.33
-    beta                0.76
+    annualized_return   0.49
+    volatility          0.34
+    information_ratio   1.25
+    sharpe              1.36
+    max_drawdown        0.39
+    alpha               0.36
+    beta                0.87
 """
 
 
@@ -430,7 +432,7 @@ r_thres = 0.05                # 收益率上限
 dret, uret, volmap, prx = {}, {}, {}, {}
 for stock,i in idxmap_univ.items():
     p = prx_all[i]
-    if np.isnan(p).sum() <= 26 and not np.isnan(p[-1]) and \
+    if len(filter(None, opn_all[i])) >= 54 and not np.isnan(p[-1]) and \
        not np.isnan(p[0]) and not np.isnan(p[-20]):
         uret[stock] = p[-1] / p[-20]
         dret[stock] = p[-1] / p[0]
@@ -476,7 +478,7 @@ for stock, n in buylist:
 
 
 
-cash = 29200.
+cash = 30000.
 
 position = {
 }
