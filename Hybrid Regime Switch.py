@@ -9,10 +9,16 @@ from matplotlib import pylab
 import quartz
 from quartz.api import *
 
+def mixed_universe(index='HS300', start=2010, end=2015):
+    universe = set([])
+    for y in range(start, end+1):
+        universe = universe.union(set_universe(index, '{0}-01-01'.format(y)))
+    return sorted(list(universe))
+
 start = '2010-01-01'
-end   = '2015-05-01'
+end   = '2015-05-10'
 benchmark = 'HS300'
-universe = set_universe('HS300')
+universe = mixed_universe('HS300')
 capital_base = 20000.
 
 sim_params = quartz.sim_condition.env.SimulationParameters(start, end, benchmark, universe, capital_base)
