@@ -15,219 +15,33 @@ def mixed_universe(index='HS300', start=2010, end=2015):
         universe = universe.union(set_universe(index, '{0}-01-01'.format(y)))
     return sorted(list(universe))
 
-start = '2010-01-01'
-end   = '2015-05-10'
+start = '2011-01-01'
+end   = '2015-07-20'
 benchmark = 'HS300'
-universe = mixed_universe('HS300')
+# universe = mixed_universe('HS300')
+universe = set_universe('HS300')
 capital_base = 20000.
 
 sim_params = quartz.sim_condition.env.SimulationParameters(start, end, benchmark, universe, capital_base)
 idxmap_all, data_all = quartz.sim_condition.data_generator.get_daily_data(sim_params)
 
 
+# Position Specifying
 
-# Backtest Version
-
-# Plan A
-
-refresh_rate = 1
-
-max_t = {1: 10, 2: 5, 3: 5}   # 持仓时间
-max_n = 10                    # 持仓数量
-v_thres = 4                   # 交易量倍数
-r_thres = 0.05                # 收益率上限
-
-
-class MyPosition:
-    def __init__(self):
-        self.goodShelf = {}
-        self.wareHouse = {}
+class HoldingDaysPosition:
+    from heapq import nsmallest, nlargest
     
-    def rebalance(self, account, buylist):
-        refPrxMap = account.referencePrice
-        refSecPos = account.valid_secpos
+    def __init__(self, maxSecNum=10):
+        self.maxSecNum = maxSecNum  # 最大证券数量
+        self.goodShelf = {}         # 现持有证券
+        self.wareHouse = {}         # 待买入证券
+    
+    def refresh_position(self, account, buylist):
+        """
+        根据股票持仓判断前一交易日的指令成交情况，并更新goodShelf和wareHouse中的数据
+        buylist的格式为: [(stock1, days1), (stocks2, days2), ...]
+        """
         
-        # 1. 更新倒计时
-        for sec in self.goodShelf:
-            if sec in account.universe:
-                self.goodShelf[sec] -= 1
-        for sec in self.wareHouse.keys():
-            if sec in account.universe:
-                self.wareHouse[sec] -= 1
-            if self.wareHouse[sec] <= 0:
-                del self.wareHouse[sec]
-        
-        # 2. 根据refSecPos更新goodShelf
-        for sec, n in self.goodShelf.items():
-            if sec not in refSecPos:
-                if n > 0:
-                    self.wareHouse[sec] = n
-                del self.goodShelf[sec]
-            
-        # 3. 根据buylist更新goodShelf和wareHouse
-        for sec, n in buylist[:]:
-            if sec in self.goodShelf:
-                self.goodShelf[sec] = n
-                buylist.remove((sec, n))
-            elif sec in self.wareHouse:
-                del self.wareHouse[sec]
-                
-        # a方案，按剩余资金决定买入股票数量
-
-        # 4. 根据goodShelf卖出
-        free_cash = account.cash
-        for sec, n in self.goodShelf.items():
-            if n <= 0:
-                free_cash += refPrxMap[sec] * refSecPos[sec] 
-                order_to(sec, 0)
-        
-        # 5. 确定buylist
-        b = int(max_n * free_cash / account.referencePortfolioValue)
-        supplement = [sec for sec in self.wareHouse if sec in account.universe]
-        # 1) 没有调仓空间，buylist全部添加进wareHouse
-        if b == 0:
-            for sec, n in buylist:
-                self.wareHouse[sec] = n
-            return
-        # 2) 没有可买股票
-        elif len(buylist) + len(supplement) == 0:
-            return
-        # 3) buylist足够，多的添加进wareHouse
-        elif len(buylist) >= b:
-            for sec, n in buylist[b:]:
-                self.wareHouse[sec] = n
-            buylist = buylist[:b]
-        # 4) buylist不够，但是加上仓库的足够
-        elif len(buylist) + len(supplement) >= b:
-            supplement = nlargest(b-len(buylist), supplement, key=self.wareHouse.get)
-            for sec in supplement:
-                buylist.append((sec, self.wareHouse[sec]))
-                del self.wareHouse[sec]
-        # 5) 加上仓库的也不够
-        else:
-            for sec in supplement:
-                if sec in account.universe:
-                    buylist.append((sec, self.wareHouse[sec]))
-                    del self.wareHouse[sec]
-        
-        # 6. 买入
-        symbols, amount, c = zip(*buylist)[0], {}, free_cash
-        # 1) 尝试平均买入
-        for sec in symbols:
-            a = int(c / len(symbols) / refPrxMap[sec]) / 100 * 100
-            amount[sec] = a
-            free_cash -= a * refPrxMap[sec]
-
-        # 2) 最大限度利用现金
-        while free_cash > min(map(refPrxMap.get, symbols)) * 100:
-            for sec in sorted(symbols, key=amount.get):
-                if free_cash > 100 * refPrxMap[sec]:
-                    amount[sec] += 100
-                    free_cash -= 100 * refPrxMap[sec]
-
-        # 3) 下单，钱不够的添加进wareHouse
-        for sec, n in buylist:
-            if amount[sec]:
-                self.goodShelf[sec] = n
-                order(sec, amount[sec])
-            else:
-                self.wareHouse[sec] = n
-                
-def initialize(account):
-    account.myPos = MyPosition()
-    
-def handle_data(account):
-    # 1. 计算过去三个月和一个月的累计收益
-    opn = account.get_attribute_history('openPrice', 60)
-    prx = account.get_attribute_history('closePrice', 60)
-    uret, dret = {}, {}
-    for sec, p in prx.items():
-        if sec in account.universe and len(filter(None, opn[sec])) >= 40 and \
-           not np.isnan(p[-1]) and not np.isnan(p[0]) and not np.isnan(p[-20]):
-            uret[sec] = p[-1] / p[-20]
-            dret[sec] = p[-1] / p[0]
-    
-    buylist = []
-    
-    # 2. 判断是否进入反转期，并获得反转买单
-    down = filter(lambda x: x < 1, dret.values())
-    dpct = 1.*len(down)/len(dret)
-    if dpct > 0.75:
-        buylist = nsmallest(max_n, dret, key=dret.get)
-        signal  = 1
-    
-    # 3. 判断是否进入惯性期，并获得惯性买单
-    up = filter(lambda x: x > 1, uret.values())
-    upct, rbar = 1.*len(up)/len(uret), sum(up)/len(up)
-    if 0.5 < upct < 0.75 and rbar < 1.1 and not buylist:
-        buylist = nlargest(max_n, uret, key=uret.get)
-        signal  = 2
-    
-    # 4. 判断是否存在交易量择时机会，并获得交易量择时买单
-    tv = account.get_attribute_history('turnoverVol', 80)
-    volmap = {}
-    for sec,ts in tv.items():
-        if ts[-1]:
-            ts = filter(None, ts)
-            v = 1. * sum(ts[:-1]) / (len(ts) - 1)
-            r = account.referenceReturn[sec]
-            if len(ts) >= 60 and ts[-1] >= v_thres * v and 0 < r < r_thres:
-                volmap[sec] = 1.*ts[-1]/v
-    if not buylist:
-        buylist = nlargest(max_n, volmap, key=volmap.get)
-        signal  = 3
-    
-    buylist = [(sec, max_t[signal]) for sec in buylist]
-    account.myPos.rebalance(account, buylist)
-        
-strategy = quartz.sim_condition.strategy.TradingStrategy(initialize, handle_data)        
-bt, acct = quartz.quick_backtest(sim_params, strategy, idxmap_all, data_all, refresh_rate = refresh_rate)
-perf = quartz.perf_parse(bt, acct)
-
-out_keys = ['annualized_return', 'volatility', 'information_ratio', 
-            'sharpe', 'max_drawdown', 'alpha', 'beta']
-print '\nHybrid Regime Switch Performance:'
-for k in out_keys:
-    print '    %s%.2f' % (k + ' '*(20-len(k)), perf[k])
-print '\n'
-
-fig = pylab.figure(figsize=(10, 5))
-perf['cumulative_returns'].plot()
-perf['benchmark_cumulative_returns'].plot()
-pylab.legend(['Hybrid Regime Switch', 'HS300'], loc='upper left')
-
-
-"""
-Hybrid Regime Switch Performance:
-    annualized_return   0.40
-    volatility          0.25
-    information_ratio   1.26
-    sharpe              1.48
-    max_drawdown        0.30
-    alpha               0.28
-    beta                0.70
-"""
-
-
-
-
-
-# Plan B
-
-refresh_rate = 1
-
-max_t = {1: 10, 2: 5, 3: 5}   # 持仓时间
-max_n = 10                    # 持仓数量
-v_thres = 4                   # 交易量倍数
-r_thres = 0.05                # 收益率上限
-
-
-class MyPosition:
-    def __init__(self):
-        self.goodShelf = {}
-        self.wareHouse = {}
-    
-    def rebalance(self, account, buylist):
         refPrxMap = account.referencePrice
         refSecPos = account.valid_secpos
         
@@ -255,17 +69,92 @@ class MyPosition:
                 buylist.remove((sec, n))
             elif sec in self.wareHouse:
                 del self.wareHouse[sec]
+                
+        return buylist
 
-        # b方案，按最大持仓确定调仓情况，并等权重买入
+    def rebalance_freecash(self, account, buylist):
+        """
+        根据剩余资金进行下单
+        """
+        
+        refPrxMap = account.referencePrice
+        refSecPos = account.valid_secpos
+        
+        # 1. 根据goodShelf卖出
+        free_cash = account.cash
+        for sec, n in self.goodShelf.items():
+            if n <= 0:
+                free_cash += refPrxMap[sec] * refSecPos[sec] 
+                order_to(sec, 0)
+        
+        # 2. 确定buylist
+        b = int(self.maxSecNum * free_cash / account.referencePortfolioValue)
+        supplement = [sec for sec in self.wareHouse if sec in account.universe]
+        # 1) 没有调仓空间，buylist全部添加进wareHouse
+        if b == 0:
+            for sec, n in buylist:
+                self.wareHouse[sec] = n
+            return
+        # 2) 没有可买股票
+        elif len(buylist) + len(supplement) == 0:
+            return
+        # 3) buylist足够，多的添加进wareHouse
+        elif len(buylist) >= b:
+            for sec, n in buylist[b:]:
+                self.wareHouse[sec] = n
+            buylist = buylist[:b]
+        # 4) buylist不够，但是加上仓库的足够
+        elif len(buylist) + len(supplement) >= b:
+            supplement = nlargest(b-len(buylist), supplement, key=self.wareHouse.get)
+            for sec in supplement:
+                buylist.append((sec, self.wareHouse[sec]))
+                del self.wareHouse[sec]
+        # 5) 加上仓库的也不够
+        else:
+            for sec in supplement:
+                if sec in account.universe:
+                    buylist.append((sec, self.wareHouse[sec]))
+                    del self.wareHouse[sec]
+        
+        # 3. 买入
+        symbols, amount, c = zip(*buylist)[0], {}, free_cash
+        # 1) 尝试平均买入
+        for sec in symbols:
+            a = int(c / len(symbols) / refPrxMap[sec]) / 100 * 100
+            amount[sec] = a
+            free_cash -= a * refPrxMap[sec]
 
-        # 4. 根据goodShelf卖出
+        # 2) 最大限度利用现金
+        while free_cash > min(map(refPrxMap.get, symbols)) * 100:
+            for sec in sorted(symbols, key=amount.get):
+                if free_cash > 100 * refPrxMap[sec]:
+                    amount[sec] += 100
+                    free_cash -= 100 * refPrxMap[sec]
+
+        # 3) 下单，钱不够的添加进wareHouse
+        for sec, n in buylist:
+            if amount[sec]:
+                self.goodShelf[sec] = n
+                order(sec, amount[sec])
+            else:
+                self.wareHouse[sec] = n
+    
+    def rebalance_equalweight(self, account, buylist):
+        """
+        等权重买入剩余已有证券+买入列表
+        """
+        
+        refPrxMap = account.referencePrice
+        refSecPos = account.valid_secpos
+
+        # 1. 根据goodShelf卖出
         b = len(self.goodShelf)
         for sec, n in self.goodShelf.items():
             if n <= 0:
                 b -= 1
                 order_to(sec, 0)
 
-        # 5. 确定buylist
+        # 2. 确定buylist
         b = max_n - b
         supplement = [sec for sec in self.wareHouse if sec in account.universe]
         # 1) 没有调仓空间，buylist全部添加进wareHouse
@@ -294,7 +183,7 @@ class MyPosition:
                     buylist.append((sec, self.wareHouse[sec]))
                     del self.wareHouse[sec]
         
-        # 6. 买入
+        # 3. 买入
         symbols, amount, v = list(zip(*buylist)[0]), {}, account.referencePortfolioValue
         # 1) 补完调仓列表
         for sec, n in self.goodShelf.items():
@@ -317,9 +206,21 @@ class MyPosition:
                 order(sec, amount[sec])
             else:
                 self.wareHouse[sec] = n
-                
+
+
+# Backtest Version
+
+# Plan A
+
+refresh_rate = 1
+
+max_t = {1: 10, 2: 5, 3: 5}   # 持仓时间
+max_n = 10                    # 持仓数量
+v_thres = 4                   # 交易量倍数
+r_thres = 0.05                # 收益率上限
+
 def initialize(account):
-    account.myPos = MyPosition()
+    account.myPos = HoldingDaysPosition(max_n)
     
 def handle_data(account):
     # 1. 计算过去三个月和一个月的累计收益
@@ -327,8 +228,9 @@ def handle_data(account):
     prx = account.get_attribute_history('closePrice', 60)
     uret, dret = {}, {}
     for sec, p in prx.items():
-        if sec in account.universe and len(filter(None, opn[sec])) >= 40 and \
-           not np.isnan(p[-1]) and not np.isnan(p[0]) and not np.isnan(p[-20]):
+        if sec in account.universe and len(filter(None, opn[sec])) >= 40 and\
+           all(opn[sec][-5:]) and not np.isnan(p[-1]) and \
+           not np.isnan(p[0]) and not np.isnan(p[-20]):
             uret[sec] = p[-1] / p[-20]
             dret[sec] = p[-1] / p[0]
     
@@ -363,7 +265,8 @@ def handle_data(account):
         signal  = 3
     
     buylist = [(sec, max_t[signal]) for sec in buylist]
-    account.myPos.rebalance(account, buylist)
+    account.myPos.refresh_position(account, buylist)
+    account.myPos.rebalance_equalweight(account, buylist)
         
 strategy = quartz.sim_condition.strategy.TradingStrategy(initialize, handle_data)        
 bt, acct = quartz.quick_backtest(sim_params, strategy, idxmap_all, data_all, refresh_rate = refresh_rate)
@@ -384,13 +287,101 @@ pylab.legend(['Hybrid Regime Switch', 'HS300'], loc='upper left')
 
 """
 Hybrid Regime Switch Performance:
-    annualized_return   0.49
-    volatility          0.34
-    information_ratio   1.25
-    sharpe              1.36
-    max_drawdown        0.39
-    alpha               0.36
-    beta                0.87
+    annualized_return   0.69
+    volatility          0.27
+    information_ratio   1.84
+    sharpe              2.51
+    max_drawdown        0.30
+    alpha               0.50
+    beta                0.61
+"""
+
+
+
+# Plan B
+
+refresh_rate = 1
+
+max_t = {1: 10, 2: 5, 3: 5}   # 持仓时间
+max_n = 10                    # 持仓数量
+v_thres = 4                   # 交易量倍数
+r_thres = 0.05                # 收益率上限
+
+def initialize(account):
+    account.myPos = HoldingDaysPosition(max_n)
+    
+def handle_data(account):
+    # 1. 计算过去三个月和一个月的累计收益
+    opn = account.get_attribute_history('openPrice', 60)
+    prx = account.get_attribute_history('closePrice', 60)
+    uret, dret = {}, {}
+    for sec, p in prx.items():
+        if sec in account.universe and len(filter(None, opn[sec])) >= 40 and\
+           all(opn[sec][-5:]) and not np.isnan(p[-1]) and \
+           not np.isnan(p[0]) and not np.isnan(p[-20]):
+            uret[sec] = p[-1] / p[-20]
+            dret[sec] = p[-1] / p[0]
+    
+    buylist = []
+    
+    # 2. 判断是否进入反转期，并获得反转买单
+    down = filter(lambda x: x < 1, dret.values())
+    dpct = 1.*len(down)/len(dret)
+    if dpct > 0.75:
+        buylist = nsmallest(max_n, dret, key=dret.get)
+        signal  = 1
+    
+    # 3. 判断是否进入惯性期，并获得惯性买单
+    up = filter(lambda x: x > 1, uret.values())
+    upct, rbar = 1.*len(up)/len(uret), sum(up)/len(up)
+    if 0.5 < upct < 0.75 and rbar < 1.1 and not buylist:
+        buylist = nlargest(max_n, uret, key=uret.get)
+        signal  = 2
+    
+    # 4. 判断是否存在交易量择时机会，并获得交易量择时买单
+    tv = account.get_attribute_history('turnoverVol', 80)
+    volmap = {}
+    for sec,ts in tv.items():
+        if ts[-1]:
+            ts = filter(None, ts)
+            v = 1. * sum(ts[:-1]) / (len(ts) - 1)
+            r = account.referenceReturn[sec]
+            if len(ts) >= 60 and ts[-1] >= v_thres * v and 0 < r < r_thres:
+                volmap[sec] = 1.*ts[-1]/v
+    if not buylist:
+        buylist = nlargest(max_n, volmap, key=volmap.get)
+        signal  = 3
+    
+    buylist = [(sec, max_t[signal]) for sec in buylist]
+    account.myPos.refresh_position(account, buylist)
+    account.myPos.rebalance_freecash(account, buylist)
+        
+strategy = quartz.sim_condition.strategy.TradingStrategy(initialize, handle_data)        
+bt, acct = quartz.quick_backtest(sim_params, strategy, idxmap_all, data_all, refresh_rate = refresh_rate)
+perf = quartz.perf_parse(bt, acct)
+
+out_keys = ['annualized_return', 'volatility', 'information_ratio', 
+            'sharpe', 'max_drawdown', 'alpha', 'beta']
+print '\nHybrid Regime Switch Performance:'
+for k in out_keys:
+    print '    %s%.2f' % (k + ' '*(20-len(k)), perf[k])
+print '\n'
+
+fig = pylab.figure(figsize=(10, 5))
+perf['cumulative_returns'].plot()
+perf['benchmark_cumulative_returns'].plot()
+pylab.legend(['Hybrid Regime Switch', 'HS300'], loc='upper left')
+
+
+"""
+Hybrid Regime Switch Performance:
+    annualized_return   0.52
+    volatility          0.35
+    information_ratio   1.22
+    sharpe              1.47
+    max_drawdown        0.38
+    alpha               0.40
+    beta                0.74
 """
 
 
@@ -439,7 +430,7 @@ dret, uret, volmap, prx = {}, {}, {}, {}
 for stock,i in idxmap_univ.items():
     p = prx_all[i]
     if len(filter(None, opn_all[i])) >= 54 and not np.isnan(p[-1]) and \
-       not np.isnan(p[0]) and not np.isnan(p[-20]):
+       all(opn_all[i][-5:]) and not np.isnan(p[0]) and not np.isnan(p[-20]):
         uret[stock] = p[-1] / p[-20]
         dret[stock] = p[-1] / p[0]
         prx[stock] = p[-1]
