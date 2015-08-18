@@ -184,22 +184,31 @@ class HoldingDaysPosition:
                     del self.wareHouse[sec]
         
         # 3. 买入
-        symbols, amount, v = list(zip(*buylist)[0]), {}, account.referencePortfolioValue
+        symbols, amount, free_cash = list(zip(*buylist)[0]), {}, account.referencePortfolioValue
         # 1) 补完调仓列表
         for sec, n in self.goodShelf.items():
             if n > 0:
                 symbols.append(sec)
-        
-        # 2) 计算调仓数额
-        for sec in symbols:
-            amount[sec] = int(v / len(symbols) / refPrxMap[sec]) / 100 * 100
 
-        # 3) 先卖出
+        # 2) 尝试平均调仓
+        for sec in symbols:
+            a = int(free_cash / len(symbols) / refPrxMap[sec]) / 100 * 100
+            amount[sec] = a
+            free_cash -= a * refPrxMap[sec]
+
+        # 3) 最大限度利用现金
+        while free_cash > min(map(refPrxMap.get, symbols)) * 100:
+            for sec in sorted(symbols, key=amount.get):
+                if free_cash > 100 * refPrxMap[sec]:
+                    amount[sec] += 100
+                    free_cash -= 100 * refPrxMap[sec]
+
+        # 4) 先卖出
         for sec, n in self.goodShelf.items():
             if n > 0:
                 order_to(sec, amount[sec])
-        
-        # 4) 后买入
+                
+        # 5) 后买入
         for sec, n in buylist:
             if amount[sec]:
                 self.goodShelf[sec] = n
@@ -287,13 +296,13 @@ pylab.legend(['Hybrid Regime Switch', 'HS300'], loc='upper left')
 
 """
 Hybrid Regime Switch Performance:
-    annualized_return   0.69
-    volatility          0.27
-    information_ratio   1.84
-    sharpe              2.51
+    annualized_return   0.71
+    volatility          0.30
+    information_ratio   1.80
+    sharpe              2.34
     max_drawdown        0.30
-    alpha               0.50
-    beta                0.61
+    alpha               0.52
+    beta                0.68
 """
 
 
@@ -375,13 +384,13 @@ pylab.legend(['Hybrid Regime Switch', 'HS300'], loc='upper left')
 
 """
 Hybrid Regime Switch Performance:
-    annualized_return   0.52
+    annualized_return   0.58
     volatility          0.35
-    information_ratio   1.22
-    sharpe              1.47
+    information_ratio   1.35
+    sharpe              1.65
     max_drawdown        0.38
-    alpha               0.40
-    beta                0.74
+    alpha               0.45
+    beta                0.73
 """
 
 
@@ -561,10 +570,19 @@ if flag or amount:
         if n > 0:
             symbols.append(sec)
 
-    # 2) 计算调仓数额
+    # 2) 尝试平均调仓
     for sec in symbols:
         amount[sec] = int(v / len(symbols) / prx[sec]) / 100 * 100
+        v -= amount[sec] * prx[sec]        
+    
+    # 3) 最大限度利用现金
+    while v > min(map(prx.get, symbols)) * 100:
+        for sec in sorted(symbols, key=amount.get):
+            if v > 100 * prx[sec]:
+                amount[sec] += 100
+                v -= 100 * prx[sec]
 
+    # 4) 买卖
     for sec, n in buylist:
         if amount[sec]:
             goodShelf[sec] = n
